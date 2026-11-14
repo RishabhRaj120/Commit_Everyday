@@ -1,0 +1,151 @@
+name: Daily Commit
+
+on:
+  schedule:
+    - cron: '15 0 * * *'
+      timezone: 'Asia/Kolkata'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: daily-commit-${{ github.repository }}
+  cancel-in-progress: false
+
+jobs:
+  commit:
+    name: Create today's streak commit
+    runs-on: ubuntu-latest
+    if: github.ref == format('refs/heads/{0}', github.event.repository.default_branch)
+    steps:
+      - name: Check out the default branch
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+          fetch-depth: 0
+
+      - name: Confirm required commit identity secrets
+        env:
+          COMMIT_NAME: ${{ secrets.GH_COMMIT_NAME }}
+          COMMIT_EMAIL: ${{ secrets.GH_COMMIT_EMAIL }}
+        run: |
+          if [ -z "$COMMIT_NAME" ] || [ -z "$COMMIT_EMAIL" ]; then
+            echo "GH_COMMIT_NAME and GH_COMMIT_EMAIL repository secrets must both be configured." >&2
+            exit 1
+          fi
+
+      - name: Synchronize the default branch
+        env:
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+        run: git pull --ff-only origin "$DEFAULT_BRANCH"
+
+      - name: Prepare today's state and activity entry
+        id: prepare
+        env:
+          TZ: Asia/Kolkata
+        run: |
+          node <<'NODE'
+          const fs = require('fs');
+
+          const configPath = '.github/commit-config.json';
+          const statePath = '.github/streak-state.json';
+          const logPath = '.github/daily-activity.md';
+
+          let config;
+          try {
+            config = JSON.parse(fs.readFileSync(configPath, 'utf8'));
+          } catch (error) {
+            throw new Error(`Cannot read ${configPath}: ${error.message}`);
+          }
+
+          if (!config || typeof config.statement !== 'string') {
+            throw new Error(`${configPath} must contain a string property named "statement".`);
+          }
+
+          const statement = config.statement.trim();
+          if (!statement || /[\r\n]/.test(statement)) {
+            throw new Error('The configured statement must be non-empty and contain only one line.');
+          }
+
+          let state = {};
+          if (fs.existsSync(statePath)) {
+            try {
+              state = JSON.parse(fs.readFileSync(statePath, 'utf8'));
+            } catch (error) {
+              throw new Error(`Cannot read ${statePath}: ${error.message}`);
+            }
+          }
+          if (!state || typeof state !== 'object' || Array.isArray(state)) {
+            throw new Error(`${statePath} must contain a JSON object.`);
+          }
+
+          const now = new Date();
+          const parts = new Intl.DateTimeFormat('en-US', {
+            timeZone: 'Asia/Kolkata',
+            year: 'numeric', month: '2-digit', day: '2-digit',
+            hour: '2-digit', minute: '2-digit', hourCycle: 'h23'
+          }).formatToParts(now).reduce((result, part) => {
+            if (part.type !== 'literal') result[part.type] = part.value;
+            return result;
+          }, {});
+          const date = `${parts.year}-${parts.month}-${parts.day}`;
+          const time = `${parts.hour}:${parts.minute}`;
+
+          const log = fs.existsSync(logPath) ? fs.readFileSync(logPath, 'utf8') : '';
+          const hasTodayInLog = new RegExp(`^- ${date.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')} `, 'm').test(log);
+          if (state.last_commit_date_ist === date || hasTodayInLog) {
+            console.log(`A daily commit already exists for ${date} IST; nothing to do.`);
+            fs.appendFileSync(process.env.GITHUB_OUTPUT, 'should_commit=false\n');
+            process.exit(0);
+          }
+
+          const previousStatement = typeof state.active_statement === 'string'
+            ? state.active_statement.trim()
+            : null;
+          const previousCount = Number.isSafeInteger(state.day_count) && state.day_count > 0
+            ? state.day_count
+            : 0;
+          const day = previousStatement === statement && previousCount > 0
+            ? previousCount + 1
+            : 1;
+          const messageStatement = statement.replace(/\s+/g, '_');
+          const commitMessage = `${messageStatement}_day_${day}_${date}_${time}`;
+
+          const nextState = {
+            active_statement: statement,
+            day_count: day,
+            last_commit_date_ist: date
+          };
+          fs.writeFileSync(statePath, `${JSON.stringify(nextState, null, 2)}\n`);
+          fs.appendFileSync(logPath, `${log && !log.endsWith('\n') ? '\n' : ''}- ${date} ${time} IST | ${messageStatement}_day_${day}\n`);
+          fs.appendFileSync(process.env.GITHUB_OUTPUT, `should_commit=true\ncommit_message=${commitMessage}\n`);
+          NODE
+
+      - name: Configure the requested Git identity
+        if: steps.prepare.outputs.should_commit == 'true'
+        env:
+          COMMIT_NAME: ${{ secrets.GH_COMMIT_NAME }}
+          COMMIT_EMAIL: ${{ secrets.GH_COMMIT_EMAIL }}
+        run: |
+          git config user.name "$COMMIT_NAME"
+          git config user.email "$COMMIT_EMAIL"
+
+      - name: Commit state and activity log
+        if: steps.prepare.outputs.should_commit == 'true'
+        env:
+          COMMIT_MESSAGE: ${{ steps.prepare.outputs.commit_message }}
+        run: |
+          if ! git diff --cached --quiet; then
+            echo "The index unexpectedly contains changes before staging the daily files." >&2
+            exit 1
+          fi
+          git add -- .github/streak-state.json .github/daily-activity.md
+          git diff --cached --quiet && exit 1
+          git commit -m "$COMMIT_MESSAGE"
+
+      - name: Push the daily commit
+        if: steps.prepare.outputs.should_commit == 'true'
+        env:
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+        run: git push origin "HEAD:$DEFAULT_BRANCH"
