@@ -17,12 +17,12 @@ jobs:
   commit:
     name: Create today's streak commit
     runs-on: ubuntu-latest
-    if: github.ref == format('refs/heads/{0}', github.event.repository.default_branch)
+    if: github.ref == 'refs/heads/main'
     steps:
       - name: Check out the default branch
         uses: actions/checkout@v4
         with:
-          ref: ${{ github.event.repository.default_branch }}
+          ref: main
           fetch-depth: 0
 
       - name: Confirm required commit identity secrets
@@ -37,7 +37,7 @@ jobs:
 
       - name: Synchronize the default branch
         env:
-          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+          DEFAULT_BRANCH: main
         run: git pull --ff-only origin "$DEFAULT_BRANCH"
 
       - name: Prepare today's state and activity entry
@@ -147,5 +147,5 @@ jobs:
       - name: Push the daily commit
         if: steps.prepare.outputs.should_commit == 'true'
         env:
-          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+          DEFAULT_BRANCH: main
         run: git push origin "HEAD:$DEFAULT_BRANCH"
