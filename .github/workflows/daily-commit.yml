@@ -2,7 +2,7 @@ name: Daily Commit
 
 on:
   schedule:
-    - cron: '15 0 * * *'
+    - cron: '15,20,25,30,35,40,45,50,55 0 * * *'
       timezone: 'Asia/Kolkata'
   workflow_dispatch:
 
@@ -84,13 +84,14 @@ jobs:
           const parts = new Intl.DateTimeFormat('en-US', {
             timeZone: 'Asia/Kolkata',
             year: 'numeric', month: '2-digit', day: '2-digit',
-            hour: '2-digit', minute: '2-digit', hourCycle: 'h23'
+            hour: '2-digit', minute: '2-digit', second: '2-digit', hourCycle: 'h23'
           }).formatToParts(now).reduce((result, part) => {
             if (part.type !== 'literal') result[part.type] = part.value;
             return result;
           }, {});
           const date = `${parts.year}-${parts.month}-${parts.day}`;
           const time = `${parts.hour}:${parts.minute}`;
+          const timestamp = `${date}T${time}:${parts.second}+05:30`;
 
           const log = fs.existsSync(logPath) ? fs.readFileSync(logPath, 'utf8') : '';
           const hasTodayInLog = new RegExp(`^- ${date.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')} `, 'm').test(log);
@@ -119,7 +120,7 @@ jobs:
           };
           fs.writeFileSync(statePath, `${JSON.stringify(nextState, null, 2)}\n`);
           fs.appendFileSync(logPath, `${log && !log.endsWith('\n') ? '\n' : ''}- ${date} ${time} IST | ${messageStatement}_day_${day}\n`);
-          fs.appendFileSync(process.env.GITHUB_OUTPUT, `should_commit=true\ncommit_message=${commitMessage}\n`);
+          fs.appendFileSync(process.env.GITHUB_OUTPUT, `should_commit=true\ncommit_message=${commitMessage}\ncommit_timestamp=${timestamp}\n`);
           NODE
 
       - name: Configure the requested Git identity
@@ -135,6 +136,8 @@ jobs:
         if: steps.prepare.outputs.should_commit == 'true'
         env:
           COMMIT_MESSAGE: ${{ steps.prepare.outputs.commit_message }}
+          GIT_AUTHOR_DATE: ${{ steps.prepare.outputs.commit_timestamp }}
+          GIT_COMMITTER_DATE: ${{ steps.prepare.outputs.commit_timestamp }}
         run: |
           if ! git diff --cached --quiet; then
             echo "The index unexpectedly contains changes before staging the daily files." >&2

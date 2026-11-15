@@ -8,7 +8,7 @@ Commit_Everyday uses GitHub Actions to create one configurable daily commit on t
 
 ## Features
 
-- Automatic daily commits at 00:15 IST.
+- Automatic daily commits from 00:15 IST, with retries every five minutes through 00:55 IST.
 - Customizable commit messages.
 - Automatic day counter.
 - Automatic counter reset when the statement changes.
@@ -40,11 +40,11 @@ For example: `life_is_good_day_1_2026-11-15_00:15`. Spaces in the configured sta
 
 ## How It Works
 
-1. At 00:15 in `Asia/Kolkata`, GitHub Actions checks out the default branch. You can also start the same workflow manually.
+1. From 00:15 through 00:55 in `Asia/Kolkata`, GitHub Actions gets a run opportunity every five minutes. The first successful run for an IST date creates the commit; later runs skip. You can also start the same workflow manually.
 2. The workflow reads and validates `.github/commit-config.json`.
 3. It reads `.github/streak-state.json` and `.github/daily-activity.md` to prevent a second commit for the current IST date.
 4. If the configured statement matches the active statement, the counter increases by one; otherwise it starts at day 1.
-5. The workflow writes the new state and appends one IST timestamped activity record, commits only those two files, and pushes to the default branch.
+5. The workflow writes the new state and appends one IST timestamped activity record, commits only those two files, and pushes to the default branch. It uses the captured IST execution timestamp for both Git author and committer dates, including the `+05:30` offset.
 
 ## Setup Instructions
 
